@@ -15,6 +15,13 @@ import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopConfig from "./DesktopConfig.ts";
 import { resolveDesktopBaseDir, resolveDesktopStateDir } from "./DesktopStatePaths.ts";
 import { isNightlyDesktopVersion } from "../updates/updateChannels.ts";
+import {
+  COPILOT_IMPORT_APP_NAME,
+  COPILOT_IMPORT_APP_ID,
+  COPILOT_IMPORT_HOME_NAME,
+  COPILOT_IMPORT_USER_DATA_NAME,
+  isCopilotImportBuild,
+} from "@t3tools/shared/copilotImportBuild";
 
 export interface MakeDesktopEnvironmentInput {
   readonly dirname: string;
@@ -97,6 +104,13 @@ function resolveDesktopAppBranding(input: {
   readonly appVersion: string;
 }): DesktopAppBranding {
   const stageLabel = resolveDesktopAppStageLabel(input);
+  if (isCopilotImportBuild(input.appVersion)) {
+    return {
+      baseName: "T3 Code Copilot Import",
+      stageLabel,
+      displayName: COPILOT_IMPORT_APP_NAME,
+    };
+  }
   return {
     baseName: APP_BASE_NAME,
     stageLabel,
@@ -142,6 +156,12 @@ const make = Effect.fn("desktop.environment.make")(function* (
   const homeDirectory = input.homeDirectory;
   const devServerUrl = config.devServerUrl;
   const isDevelopment = Option.isSome(devServerUrl);
+  const isCopilotImport = isCopilotImportBuild(input.appVersion);
+  const t3Home = Option.orElse(config.t3Home, () =>
+    isCopilotImport
+      ? Option.some(path.join(homeDirectory, COPILOT_IMPORT_HOME_NAME))
+      : Option.none(),
+  );
   const appDataDirectory =
     input.platform === "win32"
       ? Option.getOrElse(config.appDataDirectory, () =>
@@ -153,7 +173,7 @@ const make = Effect.fn("desktop.environment.make")(function* (
   const baseDir = resolveDesktopBaseDir({
     homeDirectory,
     joinPath: path.join,
-    t3Home: config.t3Home,
+    t3Home,
   });
   const rootDir = path.resolve(input.dirname, "../../..");
   const appRoot = input.isPackaged ? input.appPath : rootDir;
@@ -166,10 +186,18 @@ const make = Effect.fn("desktop.environment.make")(function* (
     baseDir,
     isDevelopment,
     joinPath: path.join,
-    t3Home: config.t3Home,
+    t3Home,
   });
-  const userDataDirName = isDevelopment ? "t3code-dev" : "t3code";
-  const legacyUserDataDirName = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
+  const userDataDirName = isCopilotImport
+    ? COPILOT_IMPORT_USER_DATA_NAME
+    : isDevelopment
+      ? "t3code-dev"
+      : "t3code";
+  const legacyUserDataDirName = isCopilotImport
+    ? COPILOT_IMPORT_USER_DATA_NAME
+    : isDevelopment
+      ? "T3 Code (Dev)"
+      : "T3 Code (Alpha)";
   const linuxApplicationsDir = path.join(
     Option.getOrElse(config.xdgDataHome, () => path.join(homeDirectory, ".local", "share")),
     "applications",
@@ -213,7 +241,11 @@ const make = Effect.fn("desktop.environment.make")(function* (
     branding,
     displayName,
     appUserModelId: Option.getOrElse(config.appUserModelIdOverride, () =>
-      isDevelopment ? "com.t3tools.t3code.dev" : "com.t3tools.t3code",
+      isCopilotImport
+        ? COPILOT_IMPORT_APP_ID
+        : isDevelopment
+          ? "com.t3tools.t3code.dev"
+          : "com.t3tools.t3code",
     ),
     linuxDesktopEntryName: isDevelopment ? "t3code-dev.desktop" : "t3code.desktop",
     linuxWmClass: isDevelopment ? "t3code-dev" : "t3code",

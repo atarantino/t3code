@@ -361,6 +361,32 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );
 
+  it.effect(
+    "packages the Copilot fork separately without an upstream update feed or URL handlers",
+    () =>
+      Effect.gen(function* () {
+        const config = yield* createBuildConfig(
+          "mac",
+          "dmg",
+          "0.0.34-copilot-import-nightly.20261008.1",
+          false,
+          false,
+          undefined,
+          undefined,
+        );
+        assert.equal(config.appId, "com.t3tools.t3code.copilot-import");
+        assert.equal(config.productName, "T3 Code Copilot Import (Nightly)");
+        assert.isNull(config.publish);
+        assert.deepStrictEqual((config.mac as Record<string, unknown>).protocols, []);
+      }).pipe(
+        Effect.provide(
+          ConfigProvider.layer(
+            ConfigProvider.fromEnv({ env: { GITHUB_REPOSITORY: "pingdotgg/t3code" } }),
+          ),
+        ),
+      ),
+  );
+
   it.effect("preserves both Linux icon resize failures with structural context", () => {
     const commands: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }> = [];
 

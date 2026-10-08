@@ -36,6 +36,11 @@ including `COPILOT_HOME`, without interpreting credentials.
 
 ## Import CLI conversations
 
+The fork's **T3 Code Copilot Import (Nightly)** desktop app includes this importer. Open the app
+normally; its local server starts automatically, with no pairing URL needed. This test app keeps
+its own conversations and settings in `~/.t3-copilot-import`, separate from official T3 Code.
+It reads the same local Copilot CLI history and does not automatically update to official builds.
+
 To import everything at once, open the command palette and choose **Import all GitHub Copilot
 sessions…**. T3 groups the conversations by their original repository root, or working folder
 when no repository root is recorded. It reuses matching projects and creates missing projects.

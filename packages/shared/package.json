@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./copilotImportBuild": {
+      "types": "./src/copilotImportBuild.ts",
+      "import": "./src/copilotImportBuild.ts"
+    },
     "./Array": {
       "types": "./src/Array.ts",
       "import": "./src/Array.ts"

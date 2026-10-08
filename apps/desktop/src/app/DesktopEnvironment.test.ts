@@ -35,6 +35,22 @@ const makeEnvironment = (
   DesktopEnvironment.DesktopEnvironment.pipe(Effect.provide(makeEnvironmentLayer(overrides, env)));
 
 describe("DesktopEnvironment", () => {
+  it.effect("isolates the Copilot import desktop build from official desktop data", () =>
+    Effect.gen(function* () {
+      const environment = yield* makeEnvironment({
+        appVersion: "0.0.34-copilot-import-nightly.20261008.1",
+        isPackaged: true,
+      });
+      assert.equal(environment.baseDir, "/Users/alice/.t3-copilot-import");
+      assert.equal(environment.stateDir, "/Users/alice/.t3-copilot-import/userdata");
+      assert.equal(environment.userDataDirName, "t3code-copilot-import");
+      assert.equal(environment.legacyUserDataDirName, "t3code-copilot-import");
+      assert.equal(environment.appUserModelId, "com.t3tools.t3code.copilot-import");
+      assert.equal(environment.displayName, "T3 Code Copilot Import (Nightly)");
+      assert.equal(environment.branding.stageLabel, "Nightly");
+      assert.isFalse(environment.isDevelopment);
+    }),
+  );
   it.effect("derives state paths and development identity inside Effect", () =>
     Effect.gen(function* () {
       const environment = yield* makeEnvironment(
