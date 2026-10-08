@@ -34,7 +34,15 @@ Mark tokens as sensitive. The CLI decides credential precedence and can also use
 `copilot login` or GitHub CLI (`gh auth`) session. T3 Code forwards the provider environment,
 including `COPILOT_HOME`, without interpreting credentials.
 
-## Import CLI conversations
+## Import into official Nightly
+
+For official Nightly **0.0.46-nightly.20261008.2833**, use the
+[one-time import helper](../operations/copilot-import-official-nightly.md). It imports all
+local Copilot CLI conversations into the official app's data, grouped by original folders.
+Quit Nightly before applying the import; the helper makes a backup first. Reopen Nightly
+normally afterward. No custom desktop app or development server is required.
+
+## Import CLI conversations in the custom app
 
 The fork's **T3 Code Copilot Import (Nightly)** desktop app includes this importer. Open the app
 normally; its local server starts automatically, with no pairing URL needed. This test app keeps
