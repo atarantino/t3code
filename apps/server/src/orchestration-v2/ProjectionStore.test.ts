@@ -57,6 +57,14 @@ it("includes imported runless history when selecting fork context through a run"
       sourceRunOrdinal: 1,
     }),
   );
+  assert.isTrue(
+    isTurnItemAtOrBeforeRun({
+      historyOrigin: "copilot_import",
+      itemRunId: null,
+      runOrdinalById,
+      sourceRunOrdinal: 1,
+    }),
+  );
   assert.isFalse(
     isTurnItemAtOrBeforeRun({
       historyOrigin: undefined,

@@ -1,6 +1,7 @@
 import {
   type ChatAttachment,
   CommandId,
+  isImportedHistoryOrigin,
   type MessageId,
   type ModelSelection,
   OrchestrationV2Command,
@@ -451,7 +452,9 @@ export function shouldPrepareLegacyImportHandoff(input: {
   readonly legacyImportItemCount: number;
 }): boolean {
   return (
-    input.historyOrigin === "v1_import" && !input.hasCompletedRun && input.legacyImportItemCount > 0
+    isImportedHistoryOrigin(input.historyOrigin) &&
+    !input.hasCompletedRun &&
+    input.legacyImportItemCount > 0
   );
 }
 
@@ -3242,10 +3245,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const ordinal = nextRunOrdinal(projection);
       const runId = idAllocator.derive.run({ threadId: command.threadId, ordinal });
       const latestCompletedRun = projection.runs.findLast((run) => run.status === "completed");
-      const legacyImportItems =
-        projection.thread.historyOrigin === "v1_import"
-          ? projection.turnItems.filter((item) => item.runId === null)
-          : [];
+      const legacyImportItems = isImportedHistoryOrigin(projection.thread.historyOrigin)
+        ? projection.turnItems.filter((item) => item.runId === null)
+        : [];
       const isProviderSwitch =
         activeProviderThread !== undefined &&
         activeProviderThread.providerInstanceId !== modelSelection.instanceId;

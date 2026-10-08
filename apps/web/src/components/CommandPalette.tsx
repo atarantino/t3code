@@ -19,7 +19,9 @@ import {
   type DesktopWslState,
   type EnvironmentId,
   type FilesystemBrowseResult,
+  type OrchestrationV2CopilotSessionSummary,
   type ProjectId,
+  type ScopedProjectRef,
   type SourceControlDiscoveryResult,
   type SourceControlProviderKind,
   type SourceControlRepositoryInfo,
@@ -62,6 +64,7 @@ import { useTheme } from "../hooks/useTheme";
 import { readLocalApi } from "../localApi";
 import { desktopLocalBackendId } from "../connection/desktopLocal";
 import { filesystemEnvironment } from "../state/filesystem";
+import { copilotImportEnvironment } from "../state/copilotImport";
 import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
 import { sourceControlEnvironment } from "../state/sourceControl";
@@ -99,11 +102,15 @@ import {
 import {
   ADDON_ICON_CLASS,
   buildBrowseGroups,
+  buildCopilotImportItems,
   buildProjectActionItems,
   buildRootGroups,
   buildThreadActionItems,
+  COPILOT_IMPORT_ACTION_VALUE,
+  COPILOT_IMPORT_VIEW_VALUE,
   enumerateCommandPaletteItems,
   type CommandPaletteActionItem,
+  type CommandPaletteGroup,
   type CommandPaletteOpenIntent,
   type CommandPaletteSubmenuItem,
   type CommandPaletteView,
@@ -358,6 +365,15 @@ function buildAddProjectRemoteSourceReadiness(
 
   return readiness;
 }
+
+type CopilotImportListState =
+  | { readonly status: "idle" }
+  | { readonly status: "loading" }
+  | {
+      readonly status: "ready";
+      readonly sessions: ReadonlyArray<OrchestrationV2CopilotSessionSummary>;
+    }
+  | { readonly status: "error"; readonly message: string };
 
 function errorMessage(error: unknown): string {
   if (error instanceof Error && error.message.trim().length > 0) {
@@ -1413,6 +1429,80 @@ function OpenCommandPaletteDialog(props: {
     pushPaletteView,
   ]);
 
+  const listCopilotImportSessions = useAtomCommand(copilotImportEnvironment.list, {
+    reportFailure: false,
+  });
+  const importCopilotImportSession = useAtomCommand(copilotImportEnvironment.importSession, {
+    reportFailure: false,
+  });
+  const [copilotImportList, setCopilotImportList] = useState<CopilotImportListState>({
+    status: "idle",
+  });
+  const copilotImportRequestIdRef = useRef(0);
+
+  // Loaded each time the submenu opens so newly written CLI sessions appear.
+  // Stale responses from an earlier open are dropped via the request id.
+  const loadCopilotImportSessions = useCallback(
+    async (environmentId: EnvironmentId): Promise<void> => {
+      const requestId = copilotImportRequestIdRef.current + 1;
+      copilotImportRequestIdRef.current = requestId;
+      setCopilotImportList({ status: "loading" });
+      const result = await listCopilotImportSessions({ environmentId, input: {} });
+      if (requestId !== copilotImportRequestIdRef.current) {
+        return;
+      }
+      if (result._tag === "Failure") {
+        setCopilotImportList(
+          isAtomCommandInterrupted(result)
+            ? { status: "idle" }
+            : { status: "error", message: errorMessage(squashAtomCommandFailure(result)) },
+        );
+        return;
+      }
+      setCopilotImportList({ status: "ready", sessions: result.value.sessions });
+    },
+    [listCopilotImportSessions],
+  );
+
+  const runCopilotImportSession = useCallback(
+    async (
+      target: ScopedProjectRef,
+      session: OrchestrationV2CopilotSessionSummary,
+    ): Promise<void> => {
+      const result = await importCopilotImportSession({
+        environmentId: target.environmentId,
+        input: { sessionId: session.sessionId, projectId: target.projectId },
+      });
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Copilot import failed",
+              description: errorMessage(squashAtomCommandFailure(result)),
+            }),
+          );
+        }
+        return;
+      }
+      const { threadId, alreadyImported, importedItemCount } = result.value;
+      await navigate({
+        to: "/$environmentId/$threadId",
+        params: buildThreadRouteParams(scopeThreadRef(target.environmentId, threadId)),
+      });
+      toastManager.add(
+        stackedThreadToast({
+          type: "success",
+          title: alreadyImported ? "Copilot session already imported" : "Copilot session imported",
+          description: alreadyImported
+            ? session.title
+            : `Imported ${importedItemCount} ${importedItemCount === 1 ? "item" : "items"} from "${session.title}".`,
+        }),
+      );
+    },
+    [importCopilotImportSession, navigate],
+  );
+
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
 
   if (projects.length > 0) {
@@ -1452,6 +1542,20 @@ function OpenCommandPaletteDialog(props: {
       addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
       groups: [{ value: "projects", label: "Projects", items: projectThreadItems }],
     });
+
+    if (contextualProjectRef) {
+      actionItems.push({
+        kind: "submenu",
+        value: COPILOT_IMPORT_ACTION_VALUE,
+        searchTerms: ["copilot", "github copilot", "import", "session", "transcript", "history"],
+        title: "Import GitHub Copilot session…",
+        icon: <GitHubIcon className={ITEM_ICON_CLASS} />,
+        addonIcon: <GitHubIcon className={ADDON_ICON_CLASS} />,
+        groups: [
+          { value: COPILOT_IMPORT_VIEW_VALUE, label: "GitHub Copilot CLI sessions", items: [] },
+        ],
+      });
+    }
   }
 
   actionItems.push({
@@ -1582,6 +1686,8 @@ function OpenCommandPaletteDialog(props: {
   const rootGroups = buildRootGroups({ actionItems, recentThreadItems });
   const sourceSelectionViewValue =
     addProjectEnvironmentId === null ? null : `sources:${addProjectEnvironmentId}`;
+  const isCopilotImportView =
+    currentView !== null && currentView.groups[0]?.value === COPILOT_IMPORT_VIEW_VALUE;
   const activeGroups =
     addProjectEnvironmentId !== null &&
     currentView !== null &&
@@ -1590,7 +1696,9 @@ function OpenCommandPaletteDialog(props: {
           addProjectEnvironmentId,
           buildAddProjectRemoteSourceReadiness(sourceControlDiscovery.data),
         )
-      : (currentView?.groups ?? rootGroups);
+      : isCopilotImportView
+        ? buildCopilotImportViewGroups()
+        : (currentView?.groups ?? rootGroups);
 
   const filteredGroups = filterCommandPaletteGroups({
     activeGroups,
@@ -1599,6 +1707,55 @@ function OpenCommandPaletteDialog(props: {
     projectSearchItems: projectSearchItems,
     threadSearchItems: allThreadItems,
   });
+
+  function buildCopilotImportViewGroups(): CommandPaletteGroup[] {
+    const groupValue = COPILOT_IMPORT_VIEW_VALUE;
+    const groupLabel = "GitHub Copilot CLI sessions";
+    const target = contextualProjectRef;
+    if (target === null) {
+      return [];
+    }
+    const statusItem = (title: string, description?: string): CommandPaletteActionItem => ({
+      kind: "action",
+      value: `${groupValue}:status`,
+      searchTerms: [],
+      title,
+      ...(description ? { description } : {}),
+      icon: <GitHubIcon className={ITEM_ICON_CLASS} />,
+      disabled: true,
+      run: async () => {},
+    });
+    switch (copilotImportList.status) {
+      case "idle":
+        return [];
+      case "loading":
+        return [{ value: groupValue, label: groupLabel, items: [statusItem("Loading…")] }];
+      case "error":
+        return [
+          {
+            value: groupValue,
+            label: groupLabel,
+            items: [statusItem("Could not load Copilot sessions", copilotImportList.message)],
+          },
+        ];
+      case "ready":
+        if (copilotImportList.sessions.length === 0) {
+          return [];
+        }
+        return [
+          {
+            value: groupValue,
+            label: groupLabel,
+            items: buildCopilotImportItems({
+              sessions: copilotImportList.sessions,
+              projectWorkspaceRoot: projectCwdById.get(target.projectId) ?? null,
+              icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
+              runSession: (session) => runCopilotImportSession(target, session),
+            }),
+          },
+        ];
+    }
+  }
 
   const handleAddProjectForEnvironment = useCallback(
     async (input: {
@@ -2109,6 +2266,9 @@ function OpenCommandPaletteDialog(props: {
     }
 
     if (item.kind === "submenu") {
+      if (item.value === COPILOT_IMPORT_ACTION_VALUE && contextualProjectRef) {
+        void loadCopilotImportSessions(contextualProjectRef.environmentId);
+      }
       pushView(item);
       return;
     }
@@ -2418,9 +2578,15 @@ function OpenCommandPaletteDialog(props: {
                 ? {
                     emptyStateMessage: "Press Enter to create this folder and add it as a project.",
                   }
-                : threadSearch.isPending
-                  ? { emptyStateMessage: "Searching thread messages…" }
-                  : {})}
+                : isCopilotImportView &&
+                    copilotImportList.status === "ready" &&
+                    copilotImportList.sessions.length === 0
+                  ? {
+                      emptyStateMessage: "No GitHub Copilot CLI sessions found in ~/.copilot",
+                    }
+                  : threadSearch.isPending
+                    ? { emptyStateMessage: "Searching thread messages…" }
+                    : {})}
       />
     </CommandPaletteContent>
   );

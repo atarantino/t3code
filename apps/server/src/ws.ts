@@ -26,6 +26,7 @@ import {
   OrchestrationSearchThreadsError,
   OrchestrationGetTurnDiffError,
   ORCHESTRATION_V2_WS_METHODS,
+  OrchestrationV2CopilotImportError,
   OrchestrationV2DispatchCommandError,
   OrchestrationV2GetShellSnapshotError,
   OrchestrationV2GetThreadProjectionError,
@@ -72,6 +73,8 @@ import * as ServerConfig from "./config.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as ThreadManagementService from "./orchestration-v2/ThreadManagementService.ts";
+import * as CopilotSessionImporter from "./copilotImport/CopilotSessionImporter.ts";
+import * as CopilotSessionStore from "./copilotImport/CopilotSessionStore.ts";
 import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import {
@@ -427,6 +430,8 @@ const makeWsRpcLayer = (
           ),
       );
       const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
+      const copilotSessionStore = yield* CopilotSessionStore.CopilotSessionStore;
+      const copilotSessionImporter = yield* CopilotSessionImporter.CopilotSessionImporter;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
       const pullRequests = yield* PullRequestService.PullRequestService;
       const usage = yield* UsageService.UsageService;
@@ -1225,6 +1230,40 @@ const makeWsRpcLayer = (
             {
               "rpc.aggregate": "orchestration",
               "orchestration_v2.command_id": input.commandId,
+              "orchestration_v2.project_id": input.projectId,
+            },
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.listCopilotSessions]: (_input) =>
+          observeRpcEffect(
+            ORCHESTRATION_V2_WS_METHODS.listCopilotSessions,
+            copilotSessionStore.list.pipe(
+              Effect.map((sessions) => ({ sessions })),
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationV2CopilotImportError({
+                    message: "Failed to list GitHub Copilot CLI sessions",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "orchestrationV2" },
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.importCopilotSession]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_V2_WS_METHODS.importCopilotSession,
+            copilotSessionImporter
+              .importSession({ sessionId: input.sessionId, projectId: input.projectId })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationV2CopilotImportError({
+                      message: cause.message,
+                      cause,
+                    }),
+                ),
+              ),
+            {
+              "rpc.aggregate": "orchestrationV2",
               "orchestration_v2.project_id": input.projectId,
             },
           ),

@@ -57,8 +57,19 @@ export const OrchestrationV2CreationSource = Schema.Literals([
 ]);
 export type OrchestrationV2CreationSource = typeof OrchestrationV2CreationSource.Type;
 
-export const OrchestrationV2ThreadHistoryOrigin = Schema.Literals(["native", "v1_import"]);
+export const OrchestrationV2ThreadHistoryOrigin = Schema.Literals([
+  "native",
+  "v1_import",
+  "copilot_import",
+]);
 export type OrchestrationV2ThreadHistoryOrigin = typeof OrchestrationV2ThreadHistoryOrigin.Type;
+
+/** Thread histories that were imported from another system rather than created natively. */
+export function isImportedHistoryOrigin(
+  origin: OrchestrationV2ThreadHistoryOrigin | null | undefined,
+): boolean {
+  return origin === "v1_import" || origin === "copilot_import";
+}
 
 const OrchestrationV2CreationFields = {
   createdBy: OrchestrationV2Actor,
@@ -2259,6 +2270,8 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   getThreadProjection: "orchestration.getThreadProjection",
   getWorkflowScript: "orchestration.getWorkflowScript",
   launchThread: "orchestration.launchThread",
+  listCopilotSessions: "orchestration.listCopilotSessions",
+  importCopilotSession: "orchestration.importCopilotSession",
   subscribeArchivedShell: "orchestration.subscribeArchivedShell",
   subscribeShell: "orchestration.subscribeShell",
   subscribeThread: "orchestration.subscribeThread",
@@ -2482,6 +2495,29 @@ export class OrchestrationV2ThreadLaunchError extends Schema.TaggedErrorClass<Or
   },
 ) {}
 
+export const OrchestrationV2CopilotSessionSummary = Schema.Struct({
+  sessionId: TrimmedNonEmptyString,
+  title: Schema.String,
+  cwd: Schema.NullOr(Schema.String),
+  gitRoot: Schema.NullOr(Schema.String),
+  repository: Schema.NullOr(Schema.String),
+  branch: Schema.NullOr(Schema.String),
+  clientName: Schema.NullOr(Schema.String),
+  createdAt: Schema.String,
+  updatedAt: Schema.String,
+  messageCount: NonNegativeInt,
+  inUse: Schema.Boolean,
+});
+export type OrchestrationV2CopilotSessionSummary = typeof OrchestrationV2CopilotSessionSummary.Type;
+
+export class OrchestrationV2CopilotImportError extends Schema.TaggedErrorClass<OrchestrationV2CopilotImportError>()(
+  "OrchestrationV2CopilotImportError",
+  {
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
+
 export const OrchestrationV2RpcError = Schema.Union([
   OrchestrationV2DispatchCommandError,
   OrchestrationV2GetThreadProjectionError,
@@ -2568,6 +2604,23 @@ export const OrchestrationV2RpcSchemas = {
   launchThread: {
     input: OrchestrationV2ThreadLaunchInput,
     output: OrchestrationV2ThreadLaunchResult,
+  },
+  listCopilotSessions: {
+    input: Schema.Struct({}),
+    output: Schema.Struct({
+      sessions: Schema.Array(OrchestrationV2CopilotSessionSummary),
+    }),
+  },
+  importCopilotSession: {
+    input: Schema.Struct({
+      sessionId: TrimmedNonEmptyString,
+      projectId: ProjectId,
+    }),
+    output: Schema.Struct({
+      threadId: ThreadId,
+      alreadyImported: Schema.Boolean,
+      importedItemCount: NonNegativeInt,
+    }),
   },
   subscribeArchivedShell: {
     input: Schema.Struct({}),

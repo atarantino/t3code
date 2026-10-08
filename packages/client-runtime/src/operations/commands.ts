@@ -834,3 +834,23 @@ export const editQueuedRun = Effect.fn("EnvironmentCommands.editQueuedRun")(func
     text: input.text,
   });
 });
+
+export interface ImportCopilotSessionInput {
+  readonly sessionId: string;
+  readonly projectId: ProjectId;
+}
+
+export const listCopilotSessions = Effect.fn("EnvironmentCommands.listCopilotSessions")(
+  function* () {
+    return yield* request(ORCHESTRATION_V2_WS_METHODS.listCopilotSessions, {});
+  },
+);
+
+export const importCopilotSession = Effect.fn("EnvironmentCommands.importCopilotSession")(
+  function* (input: ImportCopilotSessionInput) {
+    return yield* request(ORCHESTRATION_V2_WS_METHODS.importCopilotSession, {
+      sessionId: input.sessionId,
+      projectId: input.projectId,
+    });
+  },
+);

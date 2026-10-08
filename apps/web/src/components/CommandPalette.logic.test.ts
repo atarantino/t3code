@@ -1,11 +1,14 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import type { OrchestrationV2CopilotSessionSummary } from "@t3tools/contracts";
 import type { Thread } from "../types";
 import { makeThreadFixture } from "../test-fixtures";
 import {
   buildBrowseGroups,
+  buildCopilotImportItems,
   buildThreadActionItems,
   enumerateCommandPaletteItems,
+  sortCopilotSessionsForProject,
   filterCommandPaletteGroups,
   reduceCommandPaletteUiState,
   type CommandPaletteGroup,
@@ -338,5 +341,68 @@ describe("buildBrowseGroups", () => {
     finishNavigation?.();
     await action;
     expect(actionSettled).toBe(true);
+  });
+});
+
+describe("copilot session import items", () => {
+  const session = (
+    overrides: Partial<OrchestrationV2CopilotSessionSummary> & { sessionId: string },
+  ): OrchestrationV2CopilotSessionSummary => ({
+    title: "Session",
+    cwd: null,
+    gitRoot: null,
+    repository: null,
+    branch: null,
+    clientName: null,
+    createdAt: "2026-10-01T10:00:00.000Z",
+    updatedAt: "2026-10-01T10:00:00.000Z",
+    messageCount: 2,
+    inUse: false,
+    ...overrides,
+  });
+
+  it("puts sessions whose git root matches the project workspace first", () => {
+    const sessions = [
+      session({ sessionId: "a", gitRoot: "/other/repo" }),
+      session({ sessionId: "b", cwd: "/work/app/" }),
+      session({ sessionId: "c", gitRoot: "/work/app" }),
+    ];
+    const sorted = sortCopilotSessionsForProject(sessions, "/work/app");
+    expect(sorted.map((item) => item.sessionId)).toEqual(["b", "c", "a"]);
+  });
+
+  it("keeps server order when no session matches the project", () => {
+    const sessions = [session({ sessionId: "x" }), session({ sessionId: "y" })];
+    expect(sortCopilotSessionsForProject(sessions, "/work/app").map((s) => s.sessionId)).toEqual([
+      "x",
+      "y",
+    ]);
+  });
+
+  it("builds action items with repository, message count, and in-use details", async () => {
+    const runSession = vi.fn(async () => {});
+    const items = buildCopilotImportItems({
+      sessions: [
+        session({
+          sessionId: "s1",
+          title: "Fix flaky test",
+          repository: "acme/app",
+          messageCount: 1,
+          inUse: true,
+        }),
+      ],
+      projectWorkspaceRoot: null,
+      icon: null,
+      runSession,
+    });
+    const item = items[0];
+    if (!item || item.kind !== "action") {
+      throw new Error("Expected an action item");
+    }
+    expect(item.value).toBe("copilot-session:s1");
+    expect(item.title).toBe("Fix flaky test");
+    expect(item.description).toBe("acme/app · 1 message · in use");
+    await item.run();
+    expect(runSession).toHaveBeenCalledWith(expect.objectContaining({ sessionId: "s1" }));
   });
 });

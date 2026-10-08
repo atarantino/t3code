@@ -1,6 +1,7 @@
 import {
   type FilesystemBrowseEntry,
   type KeybindingCommand,
+  type OrchestrationV2CopilotSessionSummary,
   THREAD_JUMP_KEYBINDING_COMMANDS,
 } from "@t3tools/contracts";
 import type { SidebarThreadSortOrder } from "@t3tools/contracts/settings";
@@ -240,6 +241,68 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
       },
     );
   });
+}
+
+export const COPILOT_IMPORT_ACTION_VALUE = "action:import-copilot-session";
+export const COPILOT_IMPORT_VIEW_VALUE = "copilot-import:sessions";
+
+function normalizePathForComparison(path: string): string {
+  return path.trim().replace(/[\\/]+$/, "");
+}
+
+/**
+ * Sessions whose git root (or cwd) matches the project's workspace root come
+ * first; the relative order from the server (updatedAt desc) is preserved
+ * within each partition.
+ */
+export function sortCopilotSessionsForProject(
+  sessions: ReadonlyArray<OrchestrationV2CopilotSessionSummary>,
+  projectWorkspaceRoot: string | null,
+): OrchestrationV2CopilotSessionSummary[] {
+  const target = projectWorkspaceRoot ? normalizePathForComparison(projectWorkspaceRoot) : null;
+  const matchesProject = (session: OrchestrationV2CopilotSessionSummary): boolean => {
+    if (target === null || target.length === 0) return false;
+    const candidate = session.gitRoot ?? session.cwd;
+    return candidate !== null && normalizePathForComparison(candidate) === target;
+  };
+  const matching = sessions.filter(matchesProject);
+  const others = sessions.filter((session) => !matchesProject(session));
+  return [...matching, ...others];
+}
+
+export function buildCopilotImportItems(input: {
+  sessions: ReadonlyArray<OrchestrationV2CopilotSessionSummary>;
+  projectWorkspaceRoot: string | null;
+  icon: ReactNode;
+  runSession: (session: OrchestrationV2CopilotSessionSummary) => Promise<void>;
+}): CommandPaletteActionItem[] {
+  return sortCopilotSessionsForProject(input.sessions, input.projectWorkspaceRoot).map(
+    (session) => {
+      const location = session.repository ?? session.cwd ?? "";
+      const descriptionParts = [
+        location,
+        `${session.messageCount} ${session.messageCount === 1 ? "message" : "messages"}`,
+        ...(session.inUse ? ["in use"] : []),
+      ].filter((part) => part.length > 0);
+      return {
+        kind: "action" as const,
+        value: `copilot-session:${session.sessionId}`,
+        searchTerms: [
+          session.title,
+          session.repository ?? "",
+          session.cwd ?? "",
+          session.branch ?? "",
+        ],
+        title: session.title,
+        description: descriptionParts.join(" · "),
+        timestamp: formatRelativeTimeLabel(session.updatedAt),
+        icon: input.icon,
+        run: async () => {
+          await input.runSession(session);
+        },
+      };
+    },
+  );
 }
 
 function rankSearchFieldMatch(field: string, normalizedQuery: string): number {

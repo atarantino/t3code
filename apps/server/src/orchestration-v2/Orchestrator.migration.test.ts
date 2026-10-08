@@ -47,3 +47,27 @@ it("records a reissued legacy handoff on an existing provider thread", () => {
   ]);
   assert.deepEqual(appendContextHandoffId([existingHandoffId], null), [existingHandoffId]);
 });
+
+it("hands Copilot history to the provider until a native run completes", () => {
+  assert.isTrue(
+    shouldPrepareLegacyImportHandoff({
+      historyOrigin: "copilot_import",
+      hasCompletedRun: false,
+      legacyImportItemCount: 3,
+    }),
+  );
+  assert.isFalse(
+    shouldPrepareLegacyImportHandoff({
+      historyOrigin: "copilot_import",
+      hasCompletedRun: true,
+      legacyImportItemCount: 3,
+    }),
+  );
+  assert.isFalse(
+    shouldPrepareLegacyImportHandoff({
+      historyOrigin: "copilot_import",
+      hasCompletedRun: false,
+      legacyImportItemCount: 0,
+    }),
+  );
+});

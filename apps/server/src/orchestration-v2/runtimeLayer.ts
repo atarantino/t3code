@@ -8,6 +8,8 @@ import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import { layer as projectServiceLayer } from "../project/ProjectService.ts";
 import { layer as projectSetupScriptRunnerLayer } from "../project/ProjectSetupScriptRunner.ts";
 import { layer as checkpointCaptureServiceLayer } from "./CheckpointCaptureService.ts";
+import { layer as copilotSessionImporterLayer } from "../copilotImport/CopilotSessionImporter.ts";
+import { layer as copilotSessionStoreLayer } from "../copilotImport/CopilotSessionStore.ts";
 import { layer as checkpointServiceLayer } from "./CheckpointService.ts";
 import { layer as checkpointRollbackServiceLayer } from "./CheckpointRollbackService.ts";
 import { layer as commandPolicyLayer } from "./CommandPolicy.ts";
@@ -74,6 +76,10 @@ const eventSinkProvided = OrchestrationV2EventSinkLayerLive;
 const projectionMaintenanceProvided = projectionMaintenanceLayer.pipe(Layer.provide(storesLayer));
 const legacyV1ThreadImporterProvided = legacyV1ThreadImporterLayer.pipe(
   Layer.provide(Layer.mergeAll(eventSinkProvided, eventStoreProvided)),
+);
+const copilotSessionStoreProvided = copilotSessionStoreLayer;
+const copilotSessionImporterProvided = copilotSessionImporterLayer.pipe(
+  Layer.provide(Layer.mergeAll(eventSinkProvided, eventStoreProvided, copilotSessionStoreProvided)),
 );
 
 const providerEventIngestorProvided = providerEventIngestorLayer.pipe(
@@ -251,6 +257,8 @@ export const OrchestrationV2LayerLive = Layer.mergeAll(
   providerRuntimeRecoveryProvided,
   projectionMaintenanceProvided,
   legacyV1ThreadImporterProvided,
+  copilotSessionImporterProvided,
+  copilotSessionStoreProvided,
 );
 
 export const OrchestrationV2ProductionLayerLive = Layer.mergeAll(
