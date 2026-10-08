@@ -246,6 +246,21 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
 export const COPILOT_IMPORT_ACTION_VALUE = "action:import-copilot-session";
 export const COPILOT_IMPORT_VIEW_VALUE = "copilot-import:sessions";
 
+export function buildCopilotImportAllItem(input: {
+  icon: ReactNode;
+  run: () => Promise<void>;
+}): CommandPaletteActionItem {
+  return {
+    kind: "action",
+    value: "action:import-all-copilot-sessions",
+    searchTerms: ["copilot", "github copilot", "import all", "bulk", "conversations", "history"],
+    title: "Import all GitHub Copilot sessions…",
+    description: "Group by original local folder; skip already imported sessions",
+    icon: input.icon,
+    run: input.run,
+  };
+}
+
 function normalizePathForComparison(path: string): string {
   return path.trim().replace(/[\\/]+$/, "");
 }

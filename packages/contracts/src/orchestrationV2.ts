@@ -2272,6 +2272,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   launchThread: "orchestration.launchThread",
   listCopilotSessions: "orchestration.listCopilotSessions",
   importCopilotSession: "orchestration.importCopilotSession",
+  importAllCopilotSessions: "orchestration.importAllCopilotSessions",
   subscribeArchivedShell: "orchestration.subscribeArchivedShell",
   subscribeShell: "orchestration.subscribeShell",
   subscribeThread: "orchestration.subscribeThread",
@@ -2510,6 +2511,21 @@ export const OrchestrationV2CopilotSessionSummary = Schema.Struct({
 });
 export type OrchestrationV2CopilotSessionSummary = typeof OrchestrationV2CopilotSessionSummary.Type;
 
+export const OrchestrationV2CopilotBatchImportResult = Schema.Struct({
+  importedCount: NonNegativeInt,
+  alreadyImportedCount: NonNegativeInt,
+  failures: Schema.Array(
+    Schema.Struct({
+      sessionId: Schema.String,
+      title: Schema.String,
+      workspaceRoot: Schema.NullOr(Schema.String),
+      message: Schema.String,
+    }),
+  ),
+});
+export type OrchestrationV2CopilotBatchImportResult =
+  typeof OrchestrationV2CopilotBatchImportResult.Type;
+
 export class OrchestrationV2CopilotImportError extends Schema.TaggedErrorClass<OrchestrationV2CopilotImportError>()(
   "OrchestrationV2CopilotImportError",
   {
@@ -2621,6 +2637,10 @@ export const OrchestrationV2RpcSchemas = {
       alreadyImported: Schema.Boolean,
       importedItemCount: NonNegativeInt,
     }),
+  },
+  importAllCopilotSessions: {
+    input: Schema.Struct({}),
+    output: OrchestrationV2CopilotBatchImportResult,
   },
   subscribeArchivedShell: {
     input: Schema.Struct({}),

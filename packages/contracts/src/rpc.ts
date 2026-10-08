@@ -985,6 +985,15 @@ export const WsOrchestrationV2ImportCopilotSessionRpc = Rpc.make(
   },
 );
 
+export const WsOrchestrationV2ImportAllCopilotSessionsRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.importAllCopilotSessions,
+  {
+    payload: OrchestrationV2RpcSchemas.importAllCopilotSessions.input,
+    success: OrchestrationV2RpcSchemas.importAllCopilotSessions.output,
+    error: Schema.Union([OrchestrationV2CopilotImportError, EnvironmentAuthorizationError]),
+  },
+);
+
 export const WsOrchestrationV2SubscribeArchivedShellRpc = Rpc.make(
   ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell,
   {
@@ -1211,6 +1220,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2LaunchThreadRpc,
   WsOrchestrationV2ListCopilotSessionsRpc,
   WsOrchestrationV2ImportCopilotSessionRpc,
+  WsOrchestrationV2ImportAllCopilotSessionsRpc,
   WsOrchestrationV2SubscribeArchivedShellRpc,
   WsOrchestrationV2SubscribeShellRpc,
   WsOrchestrationV2SubscribeThreadRpc,

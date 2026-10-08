@@ -6,6 +6,7 @@ import { makeThreadFixture } from "../test-fixtures";
 import {
   buildBrowseGroups,
   buildCopilotImportItems,
+  buildCopilotImportAllItem,
   buildThreadActionItems,
   enumerateCommandPaletteItems,
   sortCopilotSessionsForProject,
@@ -345,6 +346,14 @@ describe("buildBrowseGroups", () => {
 });
 
 describe("copilot session import items", () => {
+  it("offers a bulk import without requiring a selected project", async () => {
+    const run = vi.fn(async () => {});
+    const item = buildCopilotImportAllItem({ icon: null, run });
+    expect(item.title).toBe("Import all GitHub Copilot sessions…");
+    expect(item.description).toContain("original local folder");
+    await item.run();
+    expect(run).toHaveBeenCalledOnce();
+  });
   const session = (
     overrides: Partial<OrchestrationV2CopilotSessionSummary> & { sessionId: string },
   ): OrchestrationV2CopilotSessionSummary => ({

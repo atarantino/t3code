@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ProjectId, ThreadId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -22,6 +23,7 @@ import {
   CopilotSessionStoreError,
   type CopilotSessionSummary,
 } from "./CopilotSessionStore.ts";
+import { ProjectOperationError, ProjectService } from "../project/ProjectService.ts";
 
 const SESSION_ID = "11111111-2222-3333-4444-555555555555";
 const PROJECT_ID = ProjectId.make("project:copilot-import");
@@ -136,12 +138,27 @@ const session: ParsedCopilotSession = {
   entries,
 };
 
+const batchSummaries = [
+  { ...summary, sessionId: "batch-existing" },
+  { ...summary, sessionId: "batch-new", gitRoot: "/tmp/new-project" },
+  {
+    ...summary,
+    sessionId: "batch-same-root",
+    gitRoot: "/tmp/new-project",
+    cwd: "/tmp/new-project/subdir",
+  },
+  { ...summary, sessionId: "batch-no-folder", gitRoot: null, cwd: null },
+  { ...summary, sessionId: "batch-missing-folder", gitRoot: "/tmp/missing-project" },
+  { ...summary, sessionId: "batch-broken-transcript" },
+  { ...summary, sessionId: "batch-cwd", gitRoot: null, cwd: "/tmp/cwd-project" },
+];
+
 // Fake store: the importer only depends on `list` and `read`, so the fixture
 // is served straight from memory instead of ~/.copilot.
 const fakeStoreLayer = Layer.succeed(
   CopilotSessionStore,
   CopilotSessionStore.of({
-    list: Effect.succeed([summary]),
+    list: Effect.succeed(batchSummaries),
     read: (sessionId) => {
       if (sessionId === SESSION_ID) return Effect.succeed({ summary, session });
       if (sessionId === OTHER_SESSION_ID) {
@@ -153,6 +170,10 @@ const fakeStoreLayer = Layer.succeed(
           session: malformedSession,
         });
       }
+      const batchSummary = batchSummaries.find((item) => item.sessionId === sessionId);
+      if (batchSummary !== undefined && sessionId !== "batch-broken-transcript") {
+        return Effect.succeed({ summary: batchSummary, session: { ...session, sessionId } });
+      }
       return Effect.fail(new CopilotSessionStoreError({ operation: "read", sessionId }));
     },
   }),
@@ -163,10 +184,76 @@ const eventStoreProvided = eventStoreLayer.pipe(Layer.provideMerge(databaseLayer
 const projectionStoreProvided = projectionStoreLayer.pipe(Layer.provideMerge(databaseLayer));
 const storesProvided = Layer.mergeAll(databaseLayer, eventStoreProvided, projectionStoreProvided);
 const eventSinkProvided = eventSinkLayer.pipe(Layer.provide(storesProvided));
+const projectServiceProvided = Layer.effect(
+  ProjectService,
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    return ProjectService.of({
+      create: () => Effect.die("Unexpected project create"),
+      update: () => Effect.die("Unexpected project update"),
+      delete: () => Effect.die("Unexpected project delete"),
+      getById: () => Effect.die("Unexpected project read"),
+      getByWorkspaceRoot: () => Effect.die("Unexpected workspace read"),
+      snapshot: Effect.die("Unexpected project snapshot"),
+      bootstrap: (input) =>
+        Effect.gen(function* () {
+          assert.equal(input.createWorkspaceRootIfMissing, false);
+          if (input.workspaceRoot === "/tmp/missing-project") {
+            return yield* new ProjectOperationError({
+              operation: "normalize-workspace",
+              workspaceRoot: input.workspaceRoot,
+              cause: "Folder not found",
+            });
+          }
+          const rows = yield* sql<{
+            project_id: string;
+          }>`SELECT project_id FROM projection_projects WHERE workspace_root = ${input.workspaceRoot} AND deleted_at IS NULL`;
+          const existing = rows[0];
+          const projectId = existing ? ProjectId.make(existing.project_id) : input.projectId;
+          if (!existing) {
+            yield* sql`INSERT INTO projection_projects (project_id, title, workspace_root, default_model_selection_json, scripts_json, created_at, updated_at, deleted_at)
+          VALUES (${projectId}, ${input.title}, ${input.workspaceRoot}, NULL, '[]', ${summary.createdAt}, ${summary.updatedAt}, NULL)`;
+          }
+          return {
+            created: !existing,
+            project: {
+              id: projectId,
+              title: input.title,
+              workspaceRoot: input.workspaceRoot,
+              repositoryIdentity: null,
+              faviconPath: null,
+              defaultModelSelection: null,
+              scripts: [],
+              createdAt: summary.createdAt,
+              updatedAt: summary.updatedAt,
+              deletedAt: null,
+            },
+          };
+        }).pipe(
+          Effect.mapError(
+            (cause) => new ProjectOperationError({ operation: "dispatch-project-command", cause }),
+          ),
+        ),
+    });
+  }),
+).pipe(Layer.provide(databaseLayer));
 const importerProvided = copilotSessionImporterLayer.pipe(
-  Layer.provide(Layer.mergeAll(storesProvided, eventSinkProvided, fakeStoreLayer)),
+  Layer.provide(
+    Layer.mergeAll(
+      storesProvided,
+      eventSinkProvided,
+      fakeStoreLayer,
+      projectServiceProvided,
+      NodeServices.layer,
+    ),
+  ),
 );
-const TestLayer = Layer.mergeAll(storesProvided, eventSinkProvided, importerProvided);
+const TestLayer = Layer.mergeAll(
+  storesProvided,
+  eventSinkProvided,
+  importerProvided,
+  projectServiceProvided,
+);
 
 it.layer(TestLayer)("CopilotSessionImporter", (it) => {
   it.effect("imports a Copilot session as a copilot_import thread and is idempotent", () =>
@@ -332,5 +419,42 @@ it.layer(TestLayer)("CopilotSessionImporter", (it) => {
         .pipe(Effect.flip);
       assert.equal(error._tag, "CopilotSessionImportError");
     }),
+  );
+
+  it.effect(
+    "imports all by local folder, reuses projects, continues past failures, and safely retries",
+    () =>
+      Effect.gen(function* () {
+        const importer = yield* CopilotSessionImporter;
+        const projections = yield* ProjectionStoreV2;
+        const sql = yield* SqlClient.SqlClient;
+        const result = yield* importer.importAll;
+        assert.equal(result.importedCount, 4);
+        assert.equal(result.alreadyImportedCount, 0);
+        assert.deepStrictEqual(
+          result.failures.map((failure) => failure.sessionId),
+          ["batch-no-folder", "batch-missing-folder", "batch-broken-transcript"],
+        );
+        const projectFor = (sessionId: string) =>
+          projections
+            .getThreadProjection(ThreadId.make(`copilot-import-${sessionId}`))
+            .pipe(Effect.map((projection) => projection.thread.projectId));
+        assert.equal(yield* projectFor("batch-existing"), PROJECT_ID);
+        const newProject = yield* projectFor("batch-new");
+        assert.equal(yield* projectFor("batch-same-root"), newProject);
+        assert.notEqual(yield* projectFor("batch-cwd"), newProject);
+        const countProjects = sql<{
+          count: number;
+        }>`SELECT COUNT(*) AS count FROM projection_projects`.pipe(
+          Effect.map((rows) => rows[0]!.count),
+        );
+        const projectCount = yield* countProjects;
+        assert.equal(projectCount, 3);
+        const retry = yield* importer.importAll;
+        assert.equal(retry.importedCount, 0);
+        assert.equal(retry.alreadyImportedCount, 4);
+        assert.equal(retry.failures.length, 3);
+        assert.equal(yield* countProjects, projectCount);
+      }),
   );
 });

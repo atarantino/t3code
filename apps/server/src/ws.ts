@@ -1267,6 +1267,21 @@ const makeWsRpcLayer = (
               "orchestration_v2.project_id": input.projectId,
             },
           ),
+        [ORCHESTRATION_V2_WS_METHODS.importAllCopilotSessions]: (_input) =>
+          observeRpcEffect(
+            ORCHESTRATION_V2_WS_METHODS.importAllCopilotSessions,
+            copilotSessionImporter.importAll.pipe(
+              Effect.provideService(ProjectService.ProjectService, projectService),
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationV2CopilotImportError({
+                    message: cause.message,
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "orchestrationV2" },
+          ),
         [ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell]: (_input) =>
           observeRpcStreamEffect(
             ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell,

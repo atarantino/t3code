@@ -36,6 +36,17 @@ including `COPILOT_HOME`, without interpreting credentials.
 
 ## Import CLI conversations
 
+To import everything at once, open the command palette and choose **Import all GitHub Copilot
+sessions…**. T3 groups the conversations by their original repository root, or working folder
+when no repository root is recorded. It reuses matching projects and creates missing projects.
+You do not need to add a project first. The final notification reports imported sessions,
+previously imported sessions, and any failures, with details you can expand.
+
+Folders must still exist on the connected machine. Sessions with missing folders or no usable
+folder metadata are reported as failures, and the remaining sessions continue importing. You can
+retry the batch safely; sessions already imported are skipped. Individual import lets you choose
+a different existing project for a session whose original folder is no longer available.
+
 Open a project in the web or desktop app, open the command palette, and choose
 **Import GitHub Copilot session…**. Select a session to import its text messages and recorded tool
 calls into a T3 Code thread. Sessions from the project's workspace appear first.

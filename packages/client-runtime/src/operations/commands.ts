@@ -846,6 +846,12 @@ export const listCopilotSessions = Effect.fn("EnvironmentCommands.listCopilotSes
   },
 );
 
+export const importAllCopilotSessions = Effect.fn("EnvironmentCommands.importAllCopilotSessions")(
+  function* () {
+    return yield* request(ORCHESTRATION_V2_WS_METHODS.importAllCopilotSessions, {});
+  },
+);
+
 export const importCopilotSession = Effect.fn("EnvironmentCommands.importCopilotSession")(
   function* (input: ImportCopilotSessionInput) {
     return yield* request(ORCHESTRATION_V2_WS_METHODS.importCopilotSession, {

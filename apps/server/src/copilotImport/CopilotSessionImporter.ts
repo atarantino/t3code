@@ -1,8 +1,10 @@
 import {
+  CommandId,
   EventId,
   MessageId,
   type OrchestrationV2AppThread,
   type OrchestrationV2ConversationMessage,
+  type OrchestrationV2CopilotBatchImportResult,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2TurnItem,
   ProjectId,
@@ -15,11 +17,14 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { EventSinkV2 } from "../orchestration-v2/EventSink.ts";
 import { makeKeyedSerialExecutor } from "../orchestration-v2/KeyedSerialExecutor.ts";
+import { randomUuidV4 } from "../orchestration-v2/RandomUuid.ts";
+import { ProjectService } from "../project/ProjectService.ts";
 import type { CopilotTranscriptEntry, ParsedCopilotSession } from "./CopilotSessionParser.ts";
 import { CopilotSessionStore, type CopilotSessionSummary } from "./CopilotSessionStore.ts";
 
@@ -52,6 +57,11 @@ export class CopilotSessionImportError extends Schema.TaggedErrorClass<CopilotSe
 }
 
 export interface CopilotSessionImporterShape {
+  readonly importAll: Effect.Effect<
+    OrchestrationV2CopilotBatchImportResult,
+    CopilotSessionImportError,
+    ProjectService
+  >;
   readonly importSession: (
     input: CopilotSessionImportInput,
   ) => Effect.Effect<CopilotSessionImportResult, CopilotSessionImportError>;
@@ -314,6 +324,7 @@ const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const store = yield* CopilotSessionStore;
   const eventSink = yield* EventSinkV2;
+  const path = yield* Path.Path;
   const sessionImports = yield* makeKeyedSerialExecutor<string>();
 
   const threadExists = (threadId: ThreadId) =>
@@ -409,11 +420,81 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  return CopilotSessionImporter.of({ importSession });
+  const importAll = sessionImports
+    .withLock(
+      "batch",
+      Effect.gen(function* () {
+        const projects = yield* ProjectService;
+        const sessions = yield* store.list;
+        let importedCount = 0;
+        let alreadyImportedCount = 0;
+        const failures: Array<OrchestrationV2CopilotBatchImportResult["failures"][number]> = [];
+        const projectIds = new Map<string, ProjectId>();
+        for (const summary of sessions) {
+          const workspaceRoot = summary.gitRoot ?? summary.cwd;
+          yield* sessionImports
+            .withLock(
+              summary.sessionId,
+              Effect.gen(function* () {
+                if (yield* threadExists(copilotImportThreadId(summary.sessionId))) {
+                  alreadyImportedCount++;
+                  return;
+                }
+                if (workspaceRoot === null || !path.isAbsolute(workspaceRoot)) {
+                  return yield* new CopilotSessionImportError({
+                    operation: "find an absolute local workspace for",
+                    sessionId: summary.sessionId,
+                  });
+                }
+                const normalizedRoot = path.normalize(workspaceRoot);
+                let projectId = projectIds.get(normalizedRoot);
+                if (projectId === undefined) {
+                  const { project } = yield* projects.bootstrap({
+                    commandId: CommandId.make(yield* randomUuidV4),
+                    projectId: ProjectId.make(yield* randomUuidV4),
+                    title: path.basename(normalizedRoot) || normalizedRoot,
+                    workspaceRoot: normalizedRoot,
+                    createWorkspaceRootIfMissing: false,
+                  });
+                  projectId = project.id;
+                  projectIds.set(normalizedRoot, projectId);
+                }
+                yield* importLocked({ sessionId: summary.sessionId, projectId });
+                importedCount++;
+              }),
+            )
+            .pipe(
+              Effect.catch((cause) =>
+                Effect.sync(() => {
+                  failures.push({
+                    sessionId: summary.sessionId,
+                    title: summary.title,
+                    workspaceRoot,
+                    message: cause.message,
+                  });
+                }),
+              ),
+            );
+        }
+        return { importedCount, alreadyImportedCount, failures };
+      }),
+    )
+    .pipe(
+      Effect.mapError(
+        (cause) =>
+          new CopilotSessionImportError({
+            operation: "list sessions for importing",
+            sessionId: "all",
+            cause,
+          }),
+      ),
+    );
+
+  return CopilotSessionImporter.of({ importSession, importAll });
 });
 
 export const layer: Layer.Layer<
   CopilotSessionImporter,
   never,
-  CopilotSessionStore | EventSinkV2 | SqlClient.SqlClient
+  CopilotSessionStore | EventSinkV2 | SqlClient.SqlClient | Path.Path
 > = Layer.effect(CopilotSessionImporter, make);

@@ -103,6 +103,7 @@ import {
   ADDON_ICON_CLASS,
   buildBrowseGroups,
   buildCopilotImportItems,
+  buildCopilotImportAllItem,
   buildProjectActionItems,
   buildRootGroups,
   buildThreadActionItems,
@@ -1435,6 +1436,67 @@ function OpenCommandPaletteDialog(props: {
   const importCopilotImportSession = useAtomCommand(copilotImportEnvironment.importSession, {
     reportFailure: false,
   });
+  const importAllCopilotSessions = useAtomCommand(copilotImportEnvironment.importAll, {
+    reportFailure: false,
+  });
+  const copilotImportEnvironmentId = contextualProjectRef?.environmentId ?? primaryEnvironmentId;
+  const runAllCopilotImports = useCallback(
+    async (environmentId: EnvironmentId): Promise<void> => {
+      const toastId = toastManager.add(
+        stackedThreadToast({
+          type: "loading",
+          title: "Importing Copilot sessions…",
+          description: "Grouping conversations into projects by their original local folders.",
+          timeout: 0,
+        }),
+      );
+      const result = await importAllCopilotSessions({ environmentId, input: {} });
+      if (result._tag === "Failure") {
+        toastManager.update(
+          toastId,
+          stackedThreadToast({
+            type: "error",
+            title: "Copilot import did not finish",
+            description:
+              "You can retry safely; completed imports will be skipped. " +
+              errorMessage(squashAtomCommandFailure(result)),
+            timeout: 0,
+          }),
+        );
+        return;
+      }
+      const { importedCount, alreadyImportedCount, failures } = result.value;
+      toastManager.update(
+        toastId,
+        stackedThreadToast({
+          type: failures.length > 0 ? "warning" : "success",
+          title:
+            failures.length > 0
+              ? "Copilot import finished with failures"
+              : "Copilot import complete",
+          description: `${importedCount} imported · ${alreadyImportedCount} already imported · ${failures.length} failed`,
+          timeout: failures.length > 0 ? 0 : 6000,
+          ...(failures.length > 0
+            ? {
+                data: {
+                  expandableContent: (
+                    <ul className="space-y-2">
+                      {failures.map((failure) => (
+                        <li key={failure.sessionId}>
+                          {failure.title} ({failure.workspaceRoot ?? "No local folder recorded"}):{" "}
+                          {failure.message}
+                        </li>
+                      ))}
+                    </ul>
+                  ),
+                },
+              }
+            : {}),
+        }),
+      );
+    },
+    [importAllCopilotSessions],
+  );
   const [copilotImportList, setCopilotImportList] = useState<CopilotImportListState>({
     status: "idle",
   });
@@ -1556,6 +1618,15 @@ function OpenCommandPaletteDialog(props: {
         ],
       });
     }
+  }
+
+  if (copilotImportEnvironmentId) {
+    actionItems.push(
+      buildCopilotImportAllItem({
+        icon: <GitHubIcon className={ITEM_ICON_CLASS} />,
+        run: () => runAllCopilotImports(copilotImportEnvironmentId),
+      }),
+    );
   }
 
   actionItems.push({
@@ -1746,12 +1817,18 @@ function OpenCommandPaletteDialog(props: {
           {
             value: groupValue,
             label: groupLabel,
-            items: buildCopilotImportItems({
-              sessions: copilotImportList.sessions,
-              projectWorkspaceRoot: projectCwdById.get(target.projectId) ?? null,
-              icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
-              runSession: (session) => runCopilotImportSession(target, session),
-            }),
+            items: [
+              buildCopilotImportAllItem({
+                icon: <GitHubIcon className={ITEM_ICON_CLASS} />,
+                run: () => runAllCopilotImports(target.environmentId),
+              }),
+              ...buildCopilotImportItems({
+                sessions: copilotImportList.sessions,
+                projectWorkspaceRoot: projectCwdById.get(target.projectId) ?? null,
+                icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
+                runSession: (session) => runCopilotImportSession(target, session),
+              }),
+            ],
           },
         ];
     }
