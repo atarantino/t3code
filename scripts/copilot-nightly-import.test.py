@@ -5,6 +5,8 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -94,6 +96,52 @@ class ImportTests(unittest.TestCase):
             connection.execute("INSERT INTO effect_sql_migrations(migration_id,name) VALUES (61,'Future')")
             with self.assertRaisesRegex(ValueError, "migrations"):
                 importer.validate_database(connection)
+
+    def test_reads_checkpointed_wal_database_without_creating_source_sidecars(self):
+        database = self.root / "closed-wal.sqlite"
+        with closing(sqlite3.connect(database)) as connection:
+            connection.execute("PRAGMA journal_mode=WAL")
+            connection.execute("CREATE TABLE sample(value TEXT)")
+            connection.execute("INSERT INTO sample VALUES ('saved')")
+            connection.commit()
+            connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        for suffix in ("-wal", "-shm"):
+            sidecar = Path(str(database) + suffix)
+            if sidecar.exists():
+                sidecar.unlink()
+        before = database.read_bytes()
+        with closing(importer.connect_readonly(database)) as connection:
+            self.assertEqual(connection.execute("SELECT value FROM sample").fetchone(), ("saved",))
+            with self.assertRaises(sqlite3.OperationalError):
+                connection.execute("INSERT INTO sample VALUES ('not allowed')")
+        self.assertEqual(database.read_bytes(), before)
+        self.assertFalse(Path(str(database) + "-wal").exists())
+        self.assertFalse(Path(str(database) + "-shm").exists())
+
+    def test_readonly_fallback_preserves_uncheckpointed_wal(self):
+        database = self.root / "pending-wal.sqlite"
+        # Abrupt process exit leaves committed rows in WAL, not in the main file.
+        subprocess.run([sys.executable, "-c", """
+import os, sqlite3, sys
+c = sqlite3.connect(sys.argv[1])
+c.execute('PRAGMA journal_mode=WAL')
+c.execute('CREATE TABLE sample(value TEXT)')
+c.execute("INSERT INTO sample VALUES ('committed in WAL')")
+c.commit()
+os._exit(0)
+""", str(database)], check=True)
+        shm = Path(str(database) + "-shm")
+        if shm.exists():
+            shm.unlink()
+        wal = Path(str(database) + "-wal")
+        original_db, original_wal = database.read_bytes(), wal.read_bytes()
+        self.assertGreater(len(original_wal), 0)
+        with closing(importer.offline_readonly_snapshot(database)) as connection:
+            snapshot_directory = Path(connection.snapshot_directory.name)
+            self.assertEqual(connection.execute("SELECT value FROM sample").fetchone(), ("committed in WAL",))
+        self.assertFalse(snapshot_directory.exists())
+        self.assertEqual(database.read_bytes(), original_db)
+        self.assertEqual(wal.read_bytes(), original_wal)
 
     def test_backup_is_complete_private_and_source_unchanged(self):
         before = self.db.read_bytes()

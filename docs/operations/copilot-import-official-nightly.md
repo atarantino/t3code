@@ -9,7 +9,7 @@ and its normal updates. The custom Copilot Import desktop app is not needed.
 1. Have Python 3 available (`python3 --version`). Open official Nightly at least once
    so it has created its database. Finish any active Copilot CLI sessions.
 2. Download `copilot-nightly-import.py` from the fork's
-   [official Nightly importer release](https://github.com/atarantino/t3code/releases/tag/copilot-official-nightly-import-20261008.1)
+   [official Nightly importer release](https://github.com/atarantino/t3code/releases/tag/copilot-official-nightly-import-20261008.2)
    to Downloads.
 3. Preview the import in Terminal:
 
@@ -49,6 +49,18 @@ and `~/.copilot/session-state`. Override these with `--home /path/to/t3-home` or
 `--copilot-home /path/to/copilot-home`; `--app` selects an app installed elsewhere.
 `COPILOT_HOME` is respected. The helper deliberately does not inherit `T3CODE_HOME`,
 which may belong to a development checkout.
+
+## macOS Python compatibility
+
+Helper revision **20261008.2** fixes `Import stopped: unable to open database file`
+with macOS's bundled Python/SQLite. Apple's SQLite may reject a read-only open of a
+closed WAL database after its sidecar files have been removed. The helper now reads
+a private temporary copy in that case, including any pending WAL data, after checking
+that T3 is stopped. It does not open the source database read-write for previews or
+backup reads. Both bundled Python 3.9 and Homebrew Python passed the regression tests.
+
+If you downloaded the first revision, replace the script with the latest release and
+rerun the same command. The helper prints its revision and target path on startup.
 
 ## What is imported
 
@@ -98,7 +110,7 @@ startup. This avoids the fork-only `copilot_import` history marker. Project crea
 uses the installed official CLI so project events remain durable. The helper does
 not run a development server or alter the installed app.
 
-Thirteen focused tests cover parsing, ordering, schema guards, backups, active-server
+Fifteen focused tests cover parsing, ordering, schema guards, backups, active-server
 refusal, rollback, partial failures, and duplicate imports:
 
 ```sh

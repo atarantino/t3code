@@ -16,9 +16,11 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import uuid
 
 SUPPORTED_VERSION = "0.0.46-nightly.20261008.2833"
+HELPER_REVISION = "20261008.2"
 EPOCH = "1970-01-01T00:00:00.000Z"
 SESSION_ID = re.compile(r"^[0-9a-fA-F-]{8,64}$")
 DEFAULT_MODEL = {"instanceId": "codex", "model": "gpt-6-astra"}
@@ -168,8 +170,82 @@ def parse_session(directory):
             "updated": max(timestamp, messages[-1][2]), "messages": messages, "malformed": malformed}
 
 
+class SnapshotConnection(sqlite3.Connection):
+    """Own the private snapshot for exactly as long as its connection is open."""
+    snapshot_directory = None
+
+    def close(self):
+        try:
+            super().close()
+        finally:
+            if self.snapshot_directory is not None:
+                self.snapshot_directory.cleanup()
+                self.snapshot_directory = None
+
+
+def database_file_state(database):
+    paths = [database, Path(str(database) + "-wal"), Path(str(database) + "-journal")]
+    result = {}
+    for path in paths:
+        if path.exists():
+            stat = path.stat()
+            result[path] = (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+    return result
+
+
+def offline_readonly_snapshot(database):
+    # Apple's SQLite may reject mode=ro on a closed WAL database without its
+    # sidecars. Never work around that by opening the user's source read-write,
+    # or immutable=1 (which would silently ignore committed WAL contents).
+    assert_stopped(database)
+    directory = tempfile.TemporaryDirectory(prefix="t3-copilot-read-")
+    connection = None
+    try:
+        before = database_file_state(database)
+        snapshot = Path(directory.name) / database.name
+        for source in before:
+            target = Path(directory.name) / source.name
+            shutil.copyfile(source, target)
+            target.chmod(0o600)
+        assert_stopped(database)
+        if before != database_file_state(database):
+            raise ValueError("Nightly's database changed while copying it. Keep Nightly closed and retry.")
+        # The disposable copy may create/recover WAL sidecars. Source bytes stay
+        # untouched. SQL writes are disabled before handing the connection out.
+        connection = sqlite3.connect(snapshot, factory=SnapshotConnection)
+        connection.snapshot_directory = directory
+        connection.execute("PRAGMA schema_version").fetchone()
+        connection.execute("PRAGMA query_only=ON")
+        return connection
+    except BaseException:
+        if connection is not None:
+            connection.close()
+        directory.cleanup()
+        raise
+
+
 def connect_readonly(database):
-    return sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True)
+    with database.open("rb") as stream:
+        header = stream.read(20)
+    missing_sidecars = any(not Path(str(database) + suffix).exists() for suffix in ("-wal", "-shm"))
+    if header[:16] == b"SQLite format 3\0" and header[18:20] == b"\x02\x02" and missing_sidecars:
+        # Standard SQLite may create source sidecars even in mode=ro; Apple
+        # SQLite can fail instead. A closed-file snapshot handles both cases.
+        return offline_readonly_snapshot(database)
+    connection = sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True)
+    try:
+        # Opening is lazy: force the read here so fallback also covers failures
+        # that would otherwise first surface in validate_database().
+        connection.execute("PRAGMA schema_version").fetchone()
+        return connection
+    except sqlite3.OperationalError as error:
+        connection.close()
+        if "unable to open database file" not in str(error).lower():
+            raise
+        return offline_readonly_snapshot(database)
+    except BaseException:
+        connection.close()
+        raise
 
 
 def validate_database(connection):
@@ -285,10 +361,10 @@ def apply_import(database, home, sessions, command):
     # Use the installed official CLI for project events; only legacy history is
     # staged directly. Nightly itself turns it into durable v2 events on startup.
     failed_folders = {}
+    with closing(connect_readonly(database)) as connection:
+        projects = project_map(connection)
     for folder in sorted({session["folder"] for session in sessions}):
         assert_stopped(database)
-        with closing(connect_readonly(database)) as connection:
-            projects = project_map(connection)
         if folder not in projects:
             try:
                 result = subprocess.run(command + ["project", "add", "--base-dir", str(home), folder],
@@ -325,10 +401,10 @@ def main(argv=None):
     command = app_command(args.app.expanduser().resolve())
     if not database.is_file():
         raise ValueError(f"No Nightly database at {database}. Open official Nightly once first, or pass --home.")
+    print(f"Helper revision: {HELPER_REVISION}\nTarget: official T3 Code Nightly {SUPPORTED_VERSION}\nData: {database}", flush=True)
     with closing(connect_readonly(database)) as connection:
         validate_database(connection)
         sessions, skipped, failures = scan(args.copilot_home.expanduser().resolve(), existing_thread_ids(connection))
-    print(f"Target: official T3 Code Nightly {SUPPORTED_VERSION}\nData: {database}")
     print(f"Ready: {len(sessions)} conversations in {len({s['folder'] for s in sessions})} folders; already imported: {skipped}; skipped: {len(failures)}")
     for folder in sorted({s["folder"] for s in sessions}):
         print(f"  {sum(s['folder'] == folder for s in sessions)} conversations: {folder}")
